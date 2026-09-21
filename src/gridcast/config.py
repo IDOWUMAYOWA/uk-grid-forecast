@@ -33,6 +33,10 @@ class Settings(BaseSettings):
 
     http_timeout_s: float = 30.0
     http_max_retries: int = 3
+    http_backoff_s: float = Field(default=1.0, description="Base delay for exponential backoff.")
+
+    # Data quality: stop the pipeline if more than this share of rows is invalid
+    max_invalid_row_fraction: float = 0.01
 
     @property
     def raw_dir(self) -> Path:
