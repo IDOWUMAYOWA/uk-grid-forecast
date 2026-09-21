@@ -1,0 +1,17 @@
+{
+  "success": true,
+  "result": {
+    "id": "8f2fe0af-871c-488d-8bad-960426f24601",
+    "name": "historic-demand-data",
+    "resources": [
+      {"name": "Historic Demand Data 2024", "format": "CSV",
+       "url": "https://api.neso.energy/dataset/x/resource/a/download/demanddata_2024.csv"},
+      {"name": "Historic Demand Data 2025", "format": "CSV",
+       "url": "https://api.neso.energy/dataset/x/resource/b/download/demanddata_2025.csv"},
+      {"name": "Historic Demand Data 2026", "format": "CSV",
+       "url": "https://api.neso.energy/dataset/x/resource/c/download/demanddataupdate_2026.csv"},
+      {"name": "Data dictionary", "format": "PDF",
+       "url": "https://api.neso.energy/dataset/x/resource/d/download/dictionary.pdf"}
+    ]
+  }
+}
