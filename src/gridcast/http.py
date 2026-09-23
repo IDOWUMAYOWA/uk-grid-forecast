@@ -18,6 +18,7 @@ from tenacity import (
 
 from gridcast import __version__
 from gridcast.config import Settings
+from gridcast.errors import SourceError
 from gridcast.logging import get_logger
 
 log = get_logger(__name__)
@@ -53,7 +54,11 @@ def get_with_retry(
     settings: Settings,
     params: dict[str, Any] | None = None,
 ) -> httpx.Response:
-    """GET a URL, retrying transient failures. Raises on final failure."""
+    """GET a URL, retrying transient failures.
+
+    Raises SourceError (with the server's message) once retries are exhausted
+    or immediately for errors that retrying cannot fix, such as 400 or 404.
+    """
 
     def _get() -> httpx.Response:
         response = client.get(url, params=params)
@@ -67,4 +72,10 @@ def get_with_retry(
         before_sleep=_log_retry,
         reraise=True,
     )
-    return retrying(_get)
+    try:
+        return retrying(_get)
+    except httpx.HTTPStatusError as exc:
+        body = exc.response.text[:300]
+        raise SourceError(f"{exc.response.status_code} from {url}: {body}") from exc
+    except httpx.TransportError as exc:
+        raise SourceError(f"Could not reach {url}: {exc!r}") from exc

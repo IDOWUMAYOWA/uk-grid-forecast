@@ -1,4 +1,4 @@
-"""NESO historic demand ingestion.
+"""NESO demand ingestion: yearly history files plus the daily update file.
 
 Pipeline for each year:
 
@@ -6,6 +6,10 @@ Pipeline for each year:
              ──parse────> clean column names, UTC timestamps, drop forecasts
              ──validate─> data contract (bad rows go to quarantine)
              ──store────> data/processed/neso_demand/year=YYYY/data.parquet
+
+The yearly file for the current year stops at the end of last month, so we
+also ingest NESO's "Demand Data Update" file, which runs from the first day
+of last month up to today. `gridcast.data.load_demand` combines the two.
 
 The raw CSV is kept exactly as downloaded so we can always re-process it
 if our cleaning logic changes, without downloading again.
@@ -21,18 +25,27 @@ import httpx
 import pandas as pd
 
 from gridcast.config import Settings
-from gridcast.contracts import DEMAND_SCHEMA, validate_with_quarantine
+from gridcast.contracts import DEMAND_SCHEMA
 from gridcast.errors import SourceError
 from gridcast.http import get_with_retry
+from gridcast.ingest.common import validate_and_store
 from gridcast.logging import get_logger
 from gridcast.settlement import to_utc
-from gridcast.storage import write_bytes_atomic, write_parquet_atomic
+from gridcast.storage import write_bytes_atomic
 
 log = get_logger(__name__)
 
 # The "Historic Demand Data" dataset on the NESO Data Portal (CKAN).
 DATASET_ID = "8f2fe0af-871c-488d-8bad-960426f24601"
 SOURCE = "neso_demand"
+
+# The "Demand Data Update" file: first day of last month up to today,
+# refreshed daily by about 08:30 UTC.
+UPDATE_SOURCE = "neso_demand_update"
+UPDATE_URL = (
+    "https://api.neso.energy/dataset/7a12172a-939c-404c-b581-a6128b74f588"
+    "/resource/177f6fa4-ae49-4182-81ea-0c6b35f26ca6/download/demanddataupdate.csv"
+)
 
 # NESO has used different date formats in different years' files,
 # e.g. "2025-01-15", "15/01/2025", "15-JAN-2025" and "15-Jan-25".
@@ -216,15 +229,34 @@ def ingest(
         refresh = force or year >= current_year - 1
         path, downloaded = download(client, resource, settings, force=refresh)
 
-        clean = parse(path.read_bytes())
-        valid, quarantined = validate_with_quarantine(
-            clean, DEMAND_SCHEMA, settings.max_invalid_row_fraction
+        rows, bad = validate_and_store(
+            parse(path.read_bytes()),
+            DEMAND_SCHEMA,
+            settings,
+            processed_path(settings, year),
+            quarantine_path(settings, year),
         )
-        write_parquet_atomic(valid, processed_path(settings, year))
-        if len(quarantined):
-            write_parquet_atomic(quarantined, quarantine_path(settings, year))
-
-        log.info("neso.year.done", year=year, rows=len(valid), quarantined=len(quarantined))
-        reports.append(YearReport(year, len(valid), len(quarantined), downloaded))
+        log.info("neso.year.done", year=year, rows=rows, quarantined=bad)
+        reports.append(YearReport(year, rows, bad, downloaded))
 
     return reports
+
+
+def ingest_update(client: httpx.Client, settings: Settings) -> tuple[int, int]:
+    """Ingest the rolling "Demand Data Update" file. Always re-downloaded.
+
+    Returns (valid_rows, quarantined_rows).
+    """
+    response = get_with_retry(client, UPDATE_URL, settings)
+    raw = settings.raw_dir / UPDATE_SOURCE / "demanddataupdate.csv"
+    write_bytes_atomic(response.content, raw)
+
+    rows, bad = validate_and_store(
+        parse(response.content),
+        DEMAND_SCHEMA,
+        settings,
+        settings.processed_dir / UPDATE_SOURCE / "data.parquet",
+        settings.data_dir / "quarantine" / UPDATE_SOURCE / "data.parquet",
+    )
+    log.info("neso.update.done", rows=rows, quarantined=bad)
+    return rows, bad
