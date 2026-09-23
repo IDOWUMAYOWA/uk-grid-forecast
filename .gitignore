@@ -30,3 +30,11 @@ models/
 # OS / editor
 .DS_Store
 .idea/
+
+# MLflow local tracking database and artifacts
+mlflow.db
+mlartifacts/
+
+# MLflow local tracking database and artifacts
+mlflow.db
+mlartifacts/
