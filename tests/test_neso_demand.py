@@ -147,10 +147,34 @@ def test_transient_server_error_is_retried(settings: Settings) -> None:
 
 @respx.mock
 def test_not_found_is_not_retried(settings: Settings) -> None:
-    route = respx.get(f"{API}/package_show").respond(404)
-    with httpx.Client() as client, pytest.raises(httpx.HTTPStatusError):
+    route = respx.get(f"{API}/package_show").respond(404, text="Not found")
+    with httpx.Client() as client, pytest.raises(SourceError, match="404"):
         neso_demand.list_resources(client, settings)
     assert route.call_count == 1
+
+
+@respx.mock
+def test_server_still_down_after_retries_raises_source_error(settings: Settings) -> None:
+    route = respx.get(f"{API}/package_show").respond(503)
+    with httpx.Client() as client, pytest.raises(SourceError, match="503"):
+        neso_demand.list_resources(client, settings)
+    assert route.call_count == settings.http_max_retries
+
+
+@respx.mock
+def test_ingest_update_drops_forecasts_and_stores(settings: Settings) -> None:
+    csv = (
+        b"SETTLEMENT_DATE,SETTLEMENT_PERIOD,ND,TSD,FORECAST_ACTUAL_INDICATOR\n"
+        b"2026-09-20,1,20000,22000,A\n"
+        b"2026-09-20,2,20100,22100,A\n"
+        b"2026-09-23,1,,,F\n"
+    )
+    respx.get(neso_demand.UPDATE_URL).respond(content=csv)
+    with httpx.Client() as client:
+        rows, bad = neso_demand.ingest_update(client, settings)
+    assert (rows, bad) == (2, 0)
+    stored = pd.read_parquet(settings.processed_dir / neso_demand.UPDATE_SOURCE / "data.parquet")
+    assert stored["nd_mw"].tolist() == [20000, 20100]
 
 
 @respx.mock

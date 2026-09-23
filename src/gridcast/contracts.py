@@ -85,3 +85,52 @@ def validate_with_quarantine(
     quarantined = df.loc[bad_rows]
     valid = schema.validate(df.drop(index=bad_rows))
     return valid, quarantined
+
+
+# ------------------------------------------------------------- generation
+
+
+def _elexon_time_matches(df: pd.DataFrame) -> pd.Series:
+    """Our UTC time must agree with Elexon's own startTime for the period."""
+    return df["timestamp_utc"] == df["source_start_utc"]
+
+
+GENERATION_SCHEMA = pa.DataFrameSchema(
+    columns={
+        "settlement_date": pa.Column("datetime64[ns]"),
+        "settlement_period": pa.Column("int64", pa.Check.in_range(1, 50)),
+        "timestamp_utc": pa.Column(pd.DatetimeTZDtype(unit="ns", tz="UTC")),
+        "source_start_utc": pa.Column(pd.DatetimeTZDtype(unit="ns", tz="UTC")),
+        "fuel_type": pa.Column(str, pa.Check.str_matches(r"^[A-Z0-9]+$")),
+        # Interconnectors can be negative (exports). No single fuel type
+        # comes close to 40 GW.
+        "generation_mw": pa.Column("float64", pa.Check.in_range(-20_000, 40_000)),
+    },
+    checks=[
+        pa.Check(_period_fits_day, error="settlement_period beyond end of day"),
+        pa.Check(_elexon_time_matches, error="settlement period disagrees with startTime"),
+    ],
+    unique=["timestamp_utc", "fuel_type"],
+    coerce=True,
+    strict=True,
+)
+
+
+# ---------------------------------------------------------------- weather
+
+WEATHER_SCHEMA = pa.DataFrameSchema(
+    columns={
+        "timestamp_utc": pa.Column(pd.DatetimeTZDtype(unit="ns", tz="UTC")),
+        "location": pa.Column(str),
+        "temperature_2m": pa.Column("float64", pa.Check.in_range(-30, 45), nullable=True),
+        "apparent_temperature": pa.Column("float64", pa.Check.in_range(-45, 50), nullable=True),
+        "relative_humidity_2m": pa.Column("float64", pa.Check.in_range(0, 100), nullable=True),
+        "precipitation": pa.Column("float64", pa.Check.in_range(0, 150), nullable=True),
+        "cloud_cover": pa.Column("float64", pa.Check.in_range(0, 100), nullable=True),
+        "wind_speed_10m": pa.Column("float64", pa.Check.in_range(0, 70), nullable=True),
+        "shortwave_radiation": pa.Column("float64", pa.Check.in_range(0, 1_400), nullable=True),
+    },
+    unique=["timestamp_utc", "location"],
+    coerce=True,
+    strict=True,
+)

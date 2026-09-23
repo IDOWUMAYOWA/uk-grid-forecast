@@ -43,3 +43,10 @@ def test_ingest_exits_non_zero_when_source_is_broken(
 
     result = runner.invoke(app, ["ingest", "neso-demand", "--start-year", "2024"])
     assert result.exit_code == 1
+
+
+def test_status_reports_missing_datasets(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("GRIDCAST_DATA_DIR", str(tmp_path))
+    result = runner.invoke(app, ["status"])
+    assert result.exit_code == 0
+    assert "not ingested yet" in result.stdout
