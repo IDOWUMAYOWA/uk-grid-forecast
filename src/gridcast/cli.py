@@ -16,6 +16,7 @@ import typer
 from gridcast import __version__, data
 from gridcast.config import Settings, get_settings
 from gridcast.errors import GridcastError
+from gridcast.features.build import build_and_store, features_path
 from gridcast.http import make_client
 from gridcast.ingest import elexon_generation, neso_demand, weather
 from gridcast.logging import configure_logging, get_logger
@@ -131,6 +132,23 @@ def ingest_all(start_year: StartYear = 2023) -> None:
     for name, step in steps:
         typer.echo(f"\n=== {name} ===")
         step()
+
+
+@app.command("build-features")
+def build_features_command() -> None:
+    """Turn ingested data into the model-ready feature table."""
+    settings = get_settings()
+    try:
+        features = build_and_store(settings)
+    except (GridcastError, FileNotFoundError) as exc:
+        log.error("features.failed", error=str(exc))
+        raise typer.Exit(code=1) from exc
+
+    first, last = features["timestamp_utc"].min(), features["timestamp_utc"].max()
+    typer.echo(
+        f"\n{len(features):,} rows x {len(features.columns)} columns "
+        f"({first:%Y-%m-%d} to {last:%Y-%m-%d})\nsaved to {features_path(settings)}"
+    )
 
 
 @app.command()
