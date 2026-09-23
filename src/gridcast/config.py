@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     http_max_retries: int = 3
     http_backoff_s: float = Field(default=1.0, description="Base delay for exponential backoff.")
 
+    # Experiment tracking. Local folder by default; point this at a hosted
+    # MLflow server (for example DagsHub) by setting GRIDCAST_MLFLOW_TRACKING_URI.
+    # MLflow 3 deprecated the plain-folder store, so we default to a local
+    # SQLite database. Point this at a hosted server (for example DagsHub)
+    # with GRIDCAST_MLFLOW_TRACKING_URI.
+    mlflow_tracking_uri: str = "sqlite:///mlflow.db"
+
     # Data quality: stop the pipeline if more than this share of rows is invalid
     max_invalid_row_fraction: float = 0.01
 

@@ -20,6 +20,9 @@ from gridcast.features.build import build_and_store, features_path
 from gridcast.http import make_client
 from gridcast.ingest import elexon_generation, neso_demand, weather
 from gridcast.logging import configure_logging, get_logger
+from gridcast.models import MODEL_NAMES
+from gridcast.models.registry import BASELINE_NAMES
+from gridcast.train import compare_models, quantile_report, train
 
 app = typer.Typer(help="GB electricity demand forecasting pipeline.", no_args_is_help=True)
 ingest_app = typer.Typer(help="Download, validate and store source data.", no_args_is_help=True)
@@ -149,6 +152,62 @@ def build_features_command() -> None:
         f"\n{len(features):,} rows x {len(features.columns)} columns "
         f"({first:%Y-%m-%d} to {last:%Y-%m-%d})\nsaved to {features_path(settings)}"
     )
+
+
+Folds = Annotated[int, typer.Option(help="Number of walk-forward folds.")]
+TestDays = Annotated[int, typer.Option(help="Days of held-out data per fold.")]
+
+
+@app.command("train")
+def train_command(
+    model: Annotated[str, typer.Option(help=f"One of: {', '.join(MODEL_NAMES)}")] = "lightgbm",
+    folds: Folds = 5,
+    test_days: TestDays = 28,
+    track: Annotated[bool, typer.Option(help="Record the run in MLflow.")] = True,
+) -> None:
+    """Evaluate a model with walk-forward validation, then fit it on all data."""
+    try:
+        result = train(get_settings(), model, n_folds=folds, test_days=test_days, track=track)
+    except (GridcastError, KeyError, ValueError) as exc:
+        log.error("train.failed", model=model, error=str(exc))
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(f"\n{model}: walk-forward accuracy over {folds} folds")
+    for name, value in result.overall.items():
+        typer.echo(f"  {name:<14}{value:>12,.1f}")
+    typer.echo("\nBy segment:")
+    typer.echo(
+        result.by_segment[["dimension", "segment", "mae_mw", "mape_pct"]].to_string(index=False)
+    )
+
+
+@app.command("compare")
+def compare_command(folds: Folds = 5, test_days: TestDays = 28) -> None:
+    """Score baselines and models on identical folds, best first."""
+    names = [*BASELINE_NAMES, "ridge", "lightgbm"]
+    try:
+        table = compare_models(get_settings(), names, n_folds=folds, test_days=test_days)
+    except (GridcastError, ValueError) as exc:
+        log.error("compare.failed", error=str(exc))
+        raise typer.Exit(code=1) from exc
+
+    best = table.iloc[0]
+    baseline = table[table.model == "naive_last_week"].iloc[0]
+    improvement = (1 - best.mae_mw / baseline.mae_mw) * 100
+    typer.echo("\n" + table.to_string(index=False, float_format=lambda v: f"{v:,.1f}"))
+    typer.echo(f"\nBest: {best.model} - {improvement:.0f}% lower MAE than copying last week")
+
+
+@app.command("quantiles")
+def quantiles_command(folds: Folds = 3, test_days: TestDays = 28) -> None:
+    """Check that P10-P90 forecast intervals are honest."""
+    try:
+        report = quantile_report(get_settings(), n_folds=folds, test_days=test_days)
+    except (GridcastError, ValueError) as exc:
+        log.error("quantiles.failed", error=str(exc))
+        raise typer.Exit(code=1) from exc
+    typer.echo("\n" + report.to_string(index=False, float_format=lambda v: f"{v:,.3f}"))
+    typer.echo("\nCoverage should be close to 0.80 for a P10-P90 interval.")
 
 
 @app.command()
