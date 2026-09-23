@@ -27,5 +27,8 @@ def read_parquet_dir(directory: Path) -> pd.DataFrame:
     """Read and concatenate every parquet file under a directory."""
     files = sorted(directory.glob("**/*.parquet"))
     if not files:
-        raise FileNotFoundError(f"No parquet files found under {directory}")
+        raise FileNotFoundError(
+            f"No parquet files found under {directory.resolve()} "
+            "(paths are relative to the working directory; run ingestion first)"
+        )
     return pd.concat([pd.read_parquet(f) for f in files], ignore_index=True)
